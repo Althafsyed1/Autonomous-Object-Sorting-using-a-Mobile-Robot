@@ -1,0 +1,175 @@
+function [leftMotor, rightMotor, currentState] = sortObjects(Red_Distance, Green_Distance, Blue_Distance, Left_Distance, Front_Distance, Right_Distance, xPose, yPose, tPose180, initialState)
+
+currentState = initialState;
+% initialState == 0
+
+% Functions to define motor commands for turning left & right.
+    function [leftMotor, rightMotor] = rotateCW()
+        leftMotor = 75;
+        rightMotor = -70;
+    end
+
+    function [leftMotor, rightMotor] = rotateCCW()
+        leftMotor = -70;
+        rightMotor = 75;
+    end
+
+% Function to calculate the angle to target coordinates.
+    function angle = computeTargetAngle(xStart, yStart, xTarget, yTarget)
+        angle = atan2d(yTarget - yStart, xTarget - xStart);
+    end
+
+% Function to identify the color of the object.
+    function detectedColor = identifyObjectColor()
+        if ~isnan(Blue_Distance) && isnan(Red_Distance) && isnan(Green_Distance)
+            detectedColor = 'blue';
+        elseif ~isnan(Green_Distance) && isnan(Red_Distance) && isnan(Blue_Distance)
+            detectedColor = 'green';
+        elseif ~isnan(Red_Distance) && isnan(Green_Distance) && isnan(Blue_Distance)
+            detectedColor = 'red';
+        else
+            detectedColor = 'unknown';
+        end
+    end
+
+% Function to push the object to its colored zone.
+    function [leftMotor, rightMotor] = colorSort(color, nextState)
+        switch color
+            case 'red'
+                if xPose > 1.7 && yPose > 1.7
+                    leftMotor = 0;
+                    rightMotor = 0;
+                    currentState = nextState;
+                    return;
+                end
+                targetAngle = computeTargetAngle(xPose, yPose, 1.85, 2.05);
+                [leftMotor, rightMotor] = alignToTarget(targetAngle);
+            case 'blue'
+                if xPose < -1.7 && yPose < 0.3 && yPose > -0.3
+                    leftMotor = 0;
+                    rightMotor = 0;
+                    currentState = nextState;
+                    return;
+                end
+                targetAngle = computeTargetAngle(xPose, yPose, -2, 0);
+                [leftMotor, rightMotor] = alignToTarget(targetAngle);
+            case 'green'
+                if xPose > 1.7 && yPose < -1.7
+                    leftMotor = 0;
+                    rightMotor = 0;
+                    currentState = nextState;
+                    return;
+                end
+                targetAngle = computeTargetAngle(xPose, yPose, 2.1, -1.95);
+                [leftMotor, rightMotor] = alignToTarget(targetAngle);
+            otherwise
+                leftMotor = 120;
+                rightMotor = 120;
+        end
+    end
+
+% Function to align the robot to a target angle and move straight.
+    function [leftMotor, rightMotor] = alignToTarget(targetAngle)
+        angleDifference = tPose180 - targetAngle;
+        if angleDifference > 180
+            angleDifference = angleDifference - 360;
+        elseif angleDifference < -180
+            angleDifference = angleDifference + 360;
+        end
+        if angleDifference < -10
+            [leftMotor, rightMotor] = rotateCCW();
+        elseif angleDifference > 10
+            [leftMotor, rightMotor] = rotateCW();
+        else
+            leftMotor = 120;
+            rightMotor = 120;
+        end
+    end
+
+% Function to reposition the robot to a specific coordinate.
+    function [leftMotor, rightMotor] = repositionTo(xTarget, yTarget, nextState)
+        if xPose < xTarget + 0.1 && xPose > xTarget - 0.1 && yPose > yTarget - 0.1 && yPose < yTarget + 0.1
+            leftMotor = 0;
+            rightMotor = 0;
+            currentState = nextState;
+            return;
+        end
+        targetAngle = computeTargetAngle(xPose, yPose, xTarget, yTarget);
+        [leftMotor, rightMotor] = alignToTarget(targetAngle);
+    end
+
+% Function to determine the object's proximity to the robot.
+    function objectDistance = determineObjectProximity()
+        if ~isnan(Red_Distance)
+            objectDistance = Red_Distance;
+        elseif ~isnan(Green_Distance)
+            objectDistance = Green_Distance;
+        elseif ~isnan(Blue_Distance)
+            objectDistance = Blue_Distance;
+        else
+            objectDistance = 10;
+        end
+    end
+
+% Function to reverse the robot slightly to move away from object.
+    function [leftMotor, rightMotor] = reverseSlightly(objectDistance, nextState)
+        if objectDistance < 0.57
+            leftMotor = -120;
+            rightMotor = -120;
+        else
+            leftMotor = 0;
+            rightMotor = 0;
+            currentState = nextState;
+            return;
+        end
+    end
+
+% Robot control logic.
+switch currentState
+    case 0
+        % Travel to the top object.
+        [leftMotor, rightMotor] = repositionTo(0, 1.5, 1);
+    case 1
+        % Identify object color and bring to correct zone.
+        colorDetected = identifyObjectColor();
+        [leftMotor, rightMotor] = colorSort(colorDetected, 2);
+    case 2
+        % 
+        objectDistance = determineObjectProximity();
+        [leftMotor, rightMotor] = reverseSlightly(objectDistance, 3);
+    case 3
+        % Travel to the bottom object.
+        [leftMotor, rightMotor] = repositionTo(0, -1.5, 4);
+    case 4
+        % Identify object color and bring to correct zone.
+        colorDetected = identifyObjectColor();
+        [leftMotor, rightMotor] = colorSort(colorDetected, 5);
+    case 5
+        % 
+        objectDistance = determineObjectProximity();
+        [leftMotor, rightMotor] = reverseSlightly(objectDistance, 6);
+    case 6
+        % Return robot to the origin. 
+        [leftMotor, rightMotor] = repositionTo(0, 0, 7);
+    otherwise
+        leftMotor = 0;
+        rightMotor = 0;
+end
+
+% Collision avoidance logic.
+if Front_Distance < 0.3
+    if isnan(Left_Distance) && isnan(Right_Distance)
+        leftMotor = -120;
+        rightMotor = -120;
+    elseif isnan(Left_Distance)
+        [leftMotor, rightMotor] = rotateCCW();
+    elseif isnan(Right_Distance)
+        [leftMotor, rightMotor] = rotateCW();
+    end
+elseif Right_Distance < 0.3 && isnan(Left_Distance)
+    [leftMotor, rightMotor] = rotateCCW();
+elseif Left_Distance < 0.3 && isnan(Right_Distance)
+    [leftMotor, rightMotor] = rotateCW();
+end
+
+end
